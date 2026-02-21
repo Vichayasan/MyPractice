@@ -1,0 +1,108 @@
+import math
+import time
+from picozero import Button, LED, Motor, Pot
+
+# ------------------------------------------------------------
+# Constants
+# ------------------------------------------------------------
+SWING_FREQ_HZ   = 10          
+LOOP_DT_MS      = 1           # 1ms loop (Better to use integers for ticks)
+LOOP_DT_S       = 0.001       
+
+LED_BLINK_MS    = 250         # 2Hz blink = 500ms cycle (250ms ON / 250ms OFF)
+
+# ------------------------------------------------------------
+# Hardware Initialization
+# ------------------------------------------------------------
+button   = Button(14)         
+led      = LED(15)
+ele_pot  = Pot(27)            
+azi_pot  = Pot(26)            
+
+motor_azi = Motor(19, 18)
+motor_ele = Motor(21, 20)
+
+# Set the Hardware PWM frequency to 10Hz (as per your previous requirement)
+def set_hw_freq(m, hz):
+    if hasattr(m._forward, '_pwm'):
+        m._forward._pwm.freq(hz)
+        m._backward._pwm.freq(hz)
+
+set_hw_freq(motor_azi, 10)
+set_hw_freq(motor_ele, 10)
+
+# ------------------------------------------------------------
+# State
+# ------------------------------------------------------------
+stopped       = True          # Start in stopped state for safety
+led_blink_t   = time.ticks_ms()
+led_blink_on  = False
+phase         = 0.0           
+
+# ------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------
+
+def stop_motors():
+    motor_azi.stop()
+    motor_ele.stop()
+
+def drive_motors(phase, azi_amp, ele_amp):
+    # Sinusoidal oscillation: -1.0 to +1.0
+    velocity = math.sin(phase)          
+
+    # Calculate speeds based on sine wave and Potentiometer amplitude
+    azi_speed = abs(velocity) * azi_amp
+    ele_speed = abs(velocity) * ele_amp
+
+    if velocity >= 0:
+        motor_azi.forward(azi_speed)
+        motor_ele.forward(ele_speed)
+    else:
+        motor_azi.backward(azi_speed)
+        motor_ele.backward(ele_speed)
+
+# ------------------------------------------------------------
+# Callbacks
+# ------------------------------------------------------------
+
+def on_button_pressed():
+    global stopped
+    stopped = True
+    stop_motors()
+
+def on_button_released():
+    global stopped, phase
+    stopped = False
+    phase = 0.0 # Reset swing to start
+    led.on()
+
+button.when_pressed  = on_button_pressed
+button.when_released = on_button_released
+
+# ------------------------------------------------------------
+# Main Loop
+# ------------------------------------------------------------
+# How much the sine wave moves forward every 1ms
+phase_increment = 2.0 * math.pi * SWING_FREQ_HZ * LOOP_DT_S
+
+print("System Ready. Release button to start.")
+
+while True:
+    now = time.ticks_ms()
+
+    if not stopped:
+        # 1. Drive Motors
+        drive_motors(phase, azi_pot.value, ele_pot.value)
+
+        # 2. Advance Phase
+        phase = (phase + phase_increment) % (2.0 * math.pi)
+        
+    else:
+        # LED Blink logic (Only runs when stopped)
+        if time.ticks_diff(now, led_blink_t) >= LED_BLINK_MS:
+            led_blink_on = not led_blink_on
+            led.value = led_blink_on
+            led_blink_t = now
+
+    time.sleep_ms(LOOP_DT_MS)
